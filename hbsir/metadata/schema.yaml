@@ -45,9 +45,17 @@ household_information:
 
     - add_year
 
+    - dropna: ID
+
     - apply_function:
-        1387: hbsir.schema_functions.standard_tables.create_season
+        1387: hbsir.schema_functions.standard_tables.adjust_month
+        1400: null
+
+    - apply_function:
+        1387: hbsir.schema_functions.standard_tables.create_season_number
         1396: null
+
+    - apply_function: hbsir.schema_functions.standard_tables.season_name
 
     - apply_function:
         1387: hbsir.api.add_weight
@@ -57,8 +65,9 @@ household_information:
         1387:
           - Year
           - ID
-          - Season
           - Month
+          - Season_Number
+          - Season
           - Weight
           - Household_Type
           - Main_Household
@@ -66,6 +75,7 @@ household_information:
         1400:
           - Year
           - ID
+          - Season_Number
           - Season
           - Weight
           - Household_Type
@@ -73,11 +83,183 @@ household_information:
           - Alternative_Household
 
 
-census_month:
+Season:
+
+  table_list:
+    1363:
+      - old_rural_house_specifications
+      - old_urban_house_specifications
+    1369:
+      - house_specifications
+    1387:
+      - household_information
 
   instructions:
 
-    - add_year
+    - add_attribute:
+        1363:
+          name: Season
+          aspects: [name, season_number]
+          column_names: [Season, Season_Number]
+        1387: null
+
+    - create_column:
+        1363:
+          name: Season
+          type: categorical
+          categories:
+            Spring: Spring
+            Summer: Summer
+            Autumn: Autumn
+            Winter: Winter
+        1387: null
+
+    - apply_order:
+      - Year
+      - ID
+      - Season_Number
+      - Season
+
+
+CPI_Quarterly:
+  table_list:
+    - Season
+    - external.sci.cpi.quarterly
+
+  concat_options:
+    left_on: [Year, Season_Number]
+    right_on: [Year, Season]
+    how: left
+
+  instructions:
+
+    - rename: {CPI: CPI_Quarterly}
+
+    - apply_order:
+      - Year
+      - ID
+      - CPI_Quarterly
+
+
+CPI_Annual:
+  table_list:
+    - Season
+    - external.sci.cpi.annual
+
+  concat_options:
+    merge_on: [Year]
+    how: left
+
+  instructions:
+
+    - rename: {CPI: CPI_Annual}
+
+    - apply_order:
+      - Year
+      - ID
+      - CPI_Annual
+
+
+CPI:
+  table_list:
+    - CPI_Annual
+    - CPI_Quarterly
+  
+  concat_options:
+    on_columns: [Year, ID]
+  
+  instructions:
+
+    - apply_order:
+      - Year
+      - ID
+      - CPI_Annual
+      - CPI_Quarterly
+
+
+Administrative_Divisions:
+
+  table_list:
+    1363:
+      - old_rural_house_specifications
+      - old_urban_house_specifications
+    1369:
+      - house_specifications
+    1387:
+      - household_information
+
+  instructions:
+
+    - add_attribute:
+        name: Urban_Rural
+        aspects: [code, name]
+        column_names: [Urban_Rural_Code, Urban_Rural_Name]
+
+    - apply_pandas_function: >
+        .assign(Urban_Rural_Code=self.table["Urban_Rural_Code"].astype("str"))
+
+    - add_attribute:
+        name: Province
+        aspects: [code, name]
+        column_names: [Province_Code, Province_Name]
+
+    - apply_pandas_function: >
+        .assign(
+          Province_Code =
+          self.table["Province_Code"]
+          .astype("float")
+          .fillna(-1)
+          .astype("int")
+          .astype("str")
+          .str.pad(2, "left", "0")
+          .replace("-1", None)
+        )
+
+    - add_attribute:
+        1377:
+          name: County
+          aspects: [code, name]
+          column_names: [County_Code, County_Name]
+
+    - apply_pandas_function:
+        1377: >
+          .assign(
+            County_Code =
+            self.table["County_Code"]
+            .astype("float")
+            .fillna(-1)
+            .astype("int")
+            .astype("str")
+            .str.pad(4, "left", "0")
+            .replace("00-1", None)
+          )
+
+    - apply_order:
+        1363:
+          - Year
+          - ID
+          - Urban_Rural_Code
+          - Urban_Rural_Name
+          - Province_Code
+          - Province_Name
+        1377:
+          - Year
+          - ID
+          - Urban_Rural_Code
+          - Urban_Rural_Name
+          - Province_Code
+          - Province_Name
+          - County_Code
+          - County_Name
+
+
+# census_month:
+
+#   instructions:
+
+#     - add_year
+
+#     - dropna: ID
 
 
 house_specifications:
@@ -86,12 +268,34 @@ house_specifications:
 
     - add_year
 
+    - dropna: ID
+
+
+old_rural_house_specifications:
+
+  instructions:
+
+    - add_year
+
+    - dropna: ID
+
+
+old_urban_house_specifications:
+
+  instructions:
+
+    - add_year
+
+    - dropna: ID
+
 
 members_properties:
 
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - apply_order:
         1363:
@@ -155,6 +359,21 @@ Number_of_Members:
       - Childs
 
 
+Calorie_Based_Equivalence_Scale:
+
+  table_list:
+    members_properties
+
+  instructions:
+
+    - apply_function: hbsir.schema_functions.calorie_requirements.calorie_based_equivalence_scale
+
+    - apply_order:
+      - Year
+      - ID
+      - Calorie_Based_Equivalence_Scale_NNFTRI
+
+
 Equivalence_Scale:
 
   table_list:
@@ -180,6 +399,8 @@ food:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -197,10 +418,24 @@ food:
           type: categorical
           categories:
             Purchase: [Purchase_Free_Price, Purchase_Subsidised_Price]
+            Agricultural_Work: Agricultural_Work
+            Donation: Donation
+            Instead_of_Public_Service: Instead_of_Public_Service
+            Home_Production: Home_Production
+            Non_Agricultural_Work: Non_Agricultural_Work
+            Instead_of_Private_Service: Instead_of_Private_Service
         1369: null
 
+    - rename:
+        1363: {Kilos: Amount}
+        1369: null
+        1370: {Kilos: Amount}
+        1371: null
+
     - apply_function: 
-        1363: hbsir.schema_functions.standard_tables.calculate_amount_before_1382
+        1369: hbsir.schema_functions.standard_tables.calculate_amount_before_1382
+        1370: null
+        1371: hbsir.schema_functions.standard_tables.calculate_amount_before_1382
         1383: hbsir.schema_functions.standard_tables.calculate_amount_after_1383
 
     - create_column:
@@ -221,6 +456,9 @@ food:
           type: numerical
           expression: "Expenditure / Amount"
         1372: null
+
+    - apply_pandas_function: >
+        .assign(Price=self.table["Price"].replace(0, None))
 
     - add_classification:
         1363: {target: Commodity_Code, name: Duration}
@@ -263,6 +501,8 @@ tobacco:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -288,6 +528,8 @@ cloth:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -303,6 +545,8 @@ home:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -364,6 +608,8 @@ furniture:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -379,6 +625,8 @@ medical:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -396,6 +644,8 @@ transportation:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -411,6 +661,8 @@ communication:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -428,6 +680,8 @@ entertainment:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -443,6 +697,8 @@ education:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -460,6 +716,8 @@ hotel:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -476,6 +734,8 @@ miscellaneous:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
     - create_column:
@@ -491,6 +751,8 @@ durable:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -545,6 +807,8 @@ investment:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -614,12 +878,18 @@ investment:
 Weight:
 
   table_list:
+    1371:
+      - house_specifications
     1376:
       - external.hbsir_weights
     1396:
       - household_information
 
   instructions:
+
+    - apply_function:
+        1371: hbsir.schema_functions.weight.calculate_weight
+        1376: null
 
     - filter_year
 
@@ -659,6 +929,9 @@ Original_Expenditures:
       - durable
 
   instructions:
+
+    - fillna: [Expenditure, Secondhand_Sale]
+
     - create_column:
         name: Gross_Expenditure
         type: numerical
@@ -951,6 +1224,8 @@ self_employed_income:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
 
@@ -959,6 +1234,8 @@ other_income:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -999,7 +1276,7 @@ _long_other_income:
       - Year
       - ID
       - Member_Number
-      - Other_Incomes
+      - Other_Incomes: float
       - Other_Income_Type
 
 
@@ -1008,6 +1285,8 @@ subsidy:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -1018,6 +1297,8 @@ public_employment_income:
 
     - add_year
 
+    - dropna: ID
+
     - add_table_name
 
 
@@ -1026,6 +1307,8 @@ private_employment_income:
   instructions:
 
     - add_year
+
+    - dropna: ID
 
     - add_table_name
 
@@ -1125,6 +1408,10 @@ Cash_Incomes:
 
   instructions:
 
+    - fillna:
+        1369: [Annual_Net_Income, Profit, Other_Incomes]
+        1390: [Annual_Net_Income, Profit, Other_Incomes, Subsidy]
+
     - create_column:
         name: Income
         type: numerical
@@ -1165,7 +1452,7 @@ Income_Breakdown:
   instructions:
 
     - apply_pandas_function: >
-        .groupby(["Year", "ID", "Income_Type"], as_index=False).sum()
+        .groupby(["Year", "ID", "Income_Type"], as_index=False)["Income"].sum()
 
     - apply_order:
       - Year

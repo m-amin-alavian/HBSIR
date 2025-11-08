@@ -9,13 +9,13 @@ and analysis for users without extensive programming knowledge.
 # pylint: disable=unused-argument
 # pylint: disable=too-many-locals
 
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, overload, Optional
 from pathlib import Path
 
 import pandas as pd
 
 from bssir.metadata_reader import config, _Years
-from bssir.api import API
+from bssir.api import API, _DataSource, _Frequency, _SeparateBy
 
 
 defaults, metadata = config.set_package_config(Path(__file__).parent)
@@ -52,6 +52,7 @@ _Table = Literal[
     "old_agricultural_self_employed_income",
     "old_non_agricultural_self_employed_income",
     "old_other_income",
+    "Season",
     "Weight",
     "Number_of_Members",
     "Equivalence_Scale",
@@ -163,6 +164,23 @@ def load_table(
     return api.load_table(**parameters)
 
 
+def load_external_data(
+    table_name: str,
+    data_source: Optional[_DataSource] = None,
+    frequency: Optional[_Frequency] = None,
+    separate_by: Optional[_SeparateBy] = None,
+    form: Optional[Literal["cleaned", "original"]]  = None,
+    on_missing: Optional[Literal["error", "download", "create"]]  = None,
+    save_downloaded: Optional[bool]  = None,
+    redownload: Optional[bool]  = None,
+    save_created: Optional[bool]  = None,
+    recreate: Optional[bool]  = None,
+    reset_index: bool = True,
+) -> pd.DataFrame:
+    parameters = __get_optional_params(locals())
+    return api.load_external_table(**parameters)
+
+
 def load_knowledge(
     name: str,
     years: _Years | None = None,
@@ -197,7 +215,7 @@ def load_knowledge(
 
 def add_attribute(
     table: pd.DataFrame,
-    name: _Attribute,
+    name: _Attribute | str,
     *,
     aspects: Iterable[str] | str | None = None,
     column_names: Iterable[str] | str | None = None,
@@ -243,8 +261,8 @@ def add_attribute(
     Examples
     --------
     ``` python
-    import lfsir
-    table = lfsir.load_table(years=1401)
+    import hbsir
+    table = hbsir.load_table(years=1401)
     table = add_attribute(table, "Urban_Rural")
     table = add_attribute(table, "Province", aspects="farsi_name")
     ```
@@ -336,13 +354,37 @@ def add_weight(table: pd.DataFrame) -> pd.DataFrame:
     return api.add_weight(table)
 
 
+@overload
 def setup(
     years: _Years,
     *,
-    table_names: str | list[str] | None = None,
+    table_names: Optional[str | list[str]] = None,
     replace: bool = False,
-    method: Literal["create_from_raw", "download_cleaned"] = "create_from_raw",
-    download_source: Literal["original", "google_drive", "mirror"] = "original",
+    method: Literal["create_from_raw"] = "create_from_raw",
+    download_source: Literal["original", "mirror"] | str = "original",
+) -> None:
+    ...
+
+
+@overload
+def setup(
+    years: _Years,
+    *,
+    table_names: Optional[str | list[str]] = None,
+    replace: bool = False,
+    method: Literal["download_cleaned"] = "download_cleaned",
+    download_source: Literal["mirror"] | str = "mirror",
+) -> None:
+    ...
+
+
+def setup(
+    years: _Years,
+    *,
+    table_names: Optional[str | list[str]] = None,
+    replace: Optional[bool] = None,
+    method: Optional[Literal["create_from_raw", "download_cleaned"]] = None,
+    download_source: Optional[Literal["original", "mirror"] | str] = None,
 ) -> None:
     """Set up package data for the given years.
 
@@ -396,9 +438,16 @@ def setup(
     """
     parameters = __get_optional_params(locals())
     api.setup(**parameters)
+    years_list = set(api.utils.parse_years(years))
+    if years_list.intersection(set(range(1387, 1392))):
+        api.load_external_table("hbsir_counties")
+    if years_list.intersection(set(range(1376, 1396))):
+        api.load_external_table("hbsir_weights")
 
-
-def setup_config(replace: bool = False) -> None:
+def setup_config(
+    mode: Literal['Standard', 'Colab'] = "Standard",
+    replace: bool = False
+) -> None:
     """Copy default config file to data directory.
 
     Copies the default config file 'settings_sample.yaml' from the package
@@ -412,4 +461,7 @@ def setup_config(replace: bool = False) -> None:
         Whether to overwrite existing config file.
 
     """
-    api.setup_config(replace=replace)
+    global defaults, metadata, api
+    api.setup_config(mode=mode, replace=replace)
+    defaults, metadata = config.set_package_config(Path(__file__).parent)
+    api = API(defaults=defaults, metadata=metadata)
